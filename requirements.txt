@@ -1,0 +1,12 @@
+opencv-python
+numpy
+ultralytics
+torch
+torchvision
+open-clip-torch
+chromadb
+fastapi
+uvicorn[standard]
+python-dotenv
+google-generativeai
+python-multipart

@@ -1,0 +1,63 @@
+<!-- test_client.html
+     Backend'ni sinash uchun oddiy test sahifasi (hali asosiy frontend emas).
+     Ishlatish: server ishga tushgan holda (uvicorn app.api:app --port 8000),
+     shu faylni to'g'ridan-to'g'ri brauzerda oching (File -> Open, yoki
+     Finder'da ustiga ikki marta bosing). Server yoqilmasa hech narsa chiqmaydi. -->
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<title>Backend Test</title>
+<style>
+  body { font-family: sans-serif; background: #111; color: #eee; text-align: center; }
+  #status { margin: 10px; }
+  canvas { border: 2px solid #444; max-width: 90vw; }
+</style>
+</head>
+<body>
+  <h2>WS /ws/stream test</h2>
+  <div id="status">Ulanmoqda...</div>
+  <canvas id="canvas" width="640" height="480"></canvas>
+
+  <script>
+    const statusEl = document.getElementById("status");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const ws = new WebSocket("ws://localhost:8000/ws/stream");
+
+    ws.onopen = () => { statusEl.textContent = "Ulandi. Kadr kutilmoqda..."; };
+    ws.onerror = (e) => { statusEl.textContent = "Xato: server ishlayaptimi? (port 8000)"; };
+    ws.onclose = () => { statusEl.textContent = "Ulanish yopildi."; };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+
+      if (data.error) {
+        statusEl.textContent = "Server xatosi: " + data.error;
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.width;
+        canvas.height = img.height;
+        ctx.drawImage(img, 0, 0);
+
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#00ff00";
+        ctx.font = "18px sans-serif";
+        ctx.fillStyle = "#00ff00";
+
+        (data.objects || []).forEach((obj) => {
+          const [x1, y1, x2, y2] = obj.box;
+          ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+          ctx.fillText(obj.name + (obj.matched ? "" : " (yangi)"), x1, Math.max(20, y1 - 8));
+        });
+
+        statusEl.textContent = `Jonli oqim ishlayapti - ${(data.objects || []).length} obyekt topildi`;
+      };
+      img.src = "data:image/jpeg;base64," + data.frame;
+    };
+  </script>
+</body>
+</html>
