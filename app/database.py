@@ -33,17 +33,21 @@ def get_collection():
     return _collection
 
 
-def find_match(embedding, threshold: float = MATCH_THRESHOLD):
+def find_match(embedding, threshold: float = MATCH_THRESHOLD, user_id: str | None = None):
     """Bazadan eng yaqin narsani qidiradi. Agar masofa threshold'dan
-    kichik bo'lsa, mos kelgan narsani qaytaradi, aks holda None."""
+    kichik bo'lsa, mos kelgan narsani qaytaradi, aks holda None.
+
+    user_id berilsa, qidiruv faqat o'sha foydalanuvchiga tegishli
+    yozuvlar bilan cheklanadi (ko'p foydalanuvchili rejim)."""
     collection = get_collection()
     if collection.count() == 0:
         return None
 
-    results = collection.query(
-        query_embeddings=[embedding.tolist()],
-        n_results=1,
-    )
+    query_kwargs = {"query_embeddings": [embedding.tolist()], "n_results": 1}
+    if user_id is not None:
+        query_kwargs["where"] = {"user_id": user_id}
+
+    results = collection.query(**query_kwargs)
 
     ids = results.get("ids", [[]])[0]
     if not ids:
@@ -60,36 +64,57 @@ def find_match(embedding, threshold: float = MATCH_THRESHOLD):
     return None
 
 
-def save_item(name: str, embedding, guess_label: str = ""):
-    """Yangi narsani (nomi + vektori) bazaga qo'shadi."""
+def save_item(name: str, embedding, guess_label: str = "", user_id: str | None = None):
+    """Yangi narsani (nomi + vektori) bazaga qo'shadi.
+
+    user_id berilsa, metadata'ga qo'shiladi - shu orqali har bir
+    foydalanuvchining narsalari bir-biridan ajratiladi (ko'p foydalanuvchili
+    rejim). Berilmasa (masalan main.py'dan chaqirilganda), eski xatti-harakat
+    o'zgarmaydi."""
     collection = get_collection()
     item_id = f"{name}_{collection.count()}_{os.urandom(4).hex()}"
+    metadata = {"name": name, "guess_label": guess_label}
+    if user_id is not None:
+        metadata["user_id"] = user_id
     collection.add(
         ids=[item_id],
         embeddings=[embedding.tolist()],
-        metadatas=[{"name": name, "guess_label": guess_label}],
+        metadatas=[metadata],
     )
     return item_id
 
 
-def list_items():
-    """Bazadagi barcha noyob nomlarni ro'yxat qilib qaytaradi (frontend/tarix uchun)."""
+def list_items(user_id: str | None = None):
+    """Bazadagi barcha noyob nomlarni ro'yxat qilib qaytaradi (frontend/tarix uchun).
+
+    user_id berilsa, faqat o'sha foydalanuvchiga tegishli nomlar bilan
+    cheklanadi."""
     collection = get_collection()
     if collection.count() == 0:
         return []
-    all_items = collection.get()
+    if user_id is not None:
+        all_items = collection.get(where={"user_id": user_id})
+    else:
+        all_items = collection.get()
     names = [meta.get("name", "?") for meta in all_items.get("metadatas", [])]
     return sorted(set(names))
 
 
-def save_info(name: str, info_text: str):
+def save_info(name: str, info_text: str, user_id: str | None = None):
     """Berilgan nomga mos barcha yozuvlarning metadata'siga "info" maydonini
-    qo'shadi/yangilaydi (Gemini'dan olingan ma'lumotni keshlash uchun)."""
+    qo'shadi/yangilaydi (Gemini'dan olingan ma'lumotni keshlash uchun).
+
+    user_id berilsa, faqat o'sha foydalanuvchiga tegishli yozuvlar
+    yangilanadi."""
     collection = get_collection()
     if collection.count() == 0:
         return
 
-    matches = collection.get(where={"name": name})
+    where = {"name": name}
+    if user_id is not None:
+        where = {"$and": [{"name": name}, {"user_id": user_id}]}
+
+    matches = collection.get(where=where)
     ids = matches.get("ids", [])
     if not ids:
         return
@@ -103,14 +128,21 @@ def save_info(name: str, info_text: str):
     collection.update(ids=ids, metadatas=updated_metadatas)
 
 
-def get_info(name: str) -> str | None:
+def get_info(name: str, user_id: str | None = None) -> str | None:
     """Berilgan nom uchun avval saqlangan "info" ma'lumotini qaytaradi,
-    agar mavjud bo'lmasa None qaytaradi (Gemini'ni qayta chaqirmaslik uchun)."""
+    agar mavjud bo'lmasa None qaytaradi (Gemini'ni qayta chaqirmaslik uchun).
+
+    user_id berilsa, qidiruv faqat o'sha foydalanuvchiga tegishli
+    yozuvlar bilan cheklanadi."""
     collection = get_collection()
     if collection.count() == 0:
         return None
 
-    matches = collection.get(where={"name": name})
+    where = {"name": name}
+    if user_id is not None:
+        where = {"$and": [{"name": name}, {"user_id": user_id}]}
+
+    matches = collection.get(where=where)
     for meta in matches.get("metadatas", []):
         info = meta.get("info")
         if info:

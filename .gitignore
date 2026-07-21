@@ -4,3 +4,7 @@ __pycache__/
 .env
 product_memory/
 .DS_Store
+*.pt
+app.db
+node_modules/
+.next/
