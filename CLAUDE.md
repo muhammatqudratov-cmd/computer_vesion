@@ -40,25 +40,48 @@ narsa (mahsulot, buyum) ko'rsatilganda, tizim:
 - **Google Gemini API** (`google-generativeai`, `.env`dagi `GEMINI_API_KEY`
   orqali, model: `gemini-3.5-flash`) — obyekt haqida tabiiy tildagi
   ma'lumot olish
-- **SQLite** (`app.db`, yangi) — foydalanuvchilar (`users`) va tarix
-  (`history`) jadvallari uchun (Chroma bunga mos emas, relyatsion
-  ma'lumotlar uchun SQLite ishlatiladi). `users` jadvalida email **yo'q** —
-  faqat `username` (noyob) + `hashed_password`.
+- **MongoDB Atlas** (`pymongo`, `.env`dagi `MONGO_DEV`/`MONGO_PROD` orqali,
+  `ENVIRONMENT` o'zgaruvchisiga qarab tanlanadi) — foydalanuvchilar
+  (`users`) va tarix (`history`) kolleksiyalari uchun. SQLite'dan MongoDB'ga
+  ko'chirildi — UniFinder loyihasidagi `DatabaseModule` uslubiga o'xshab,
+  backend ishga tushganda ulanish holati konsolga chiqariladi ("MongoDB
+  connected successfully to development db" yoki xato bo'lsa
+  "Failed to connect to MongoDB"). `users` kolleksiyasida email **yo'q** —
+  faqat `username` (noyob) + `hashed_password` + `is_admin`.
 - **JWT** (python-jose yoki PyJWT) — login token'lari
 - **Frontend**: Next.js + React (Claude.ai uslubidagi dizayn: chap
   tomonda tarix sidebar'i, asosiy panelda kamera/chat maydoni)
 
-## Fayl strukturasi
+## Loyiha strukturasi (IKKITA ALOHIDA PAPKA)
+
+Bu loyiha endi ikkita mustaqil papkaga bo'lingan (UniFinder loyihasidagi kabi
+backend/frontend ajratilgan tuzilma):
+
+- **`~/Desktop/opencv/`** — backend (Python/FastAPI). Ishga tushirish:
+  `npm run start:dev` (bu shunchaki `.venv`dagi uvicorn'ni chaqiradigan
+  package.json skripti, backend kodining o'zi Python bo'lib qoladi).
+- **`~/Desktop/opencv-frontend/`** — frontend (Next.js, alohida papka,
+  `opencv/frontend` ichida EMAS). Ishga tushirish: `yarn run dev`.
+  Ikkalasi ham bir-biriga HTTP/WebSocket orqali ulanadi
+  (frontend -> `http://localhost:8000`).
+
+`opencv/frontend/` papkasidagi eski frontend kodi endi kerak emas — barcha
+frontend mantig'i `opencv-frontend/`ga ko'chirilgan.
+
+### opencv/ (backend) fayl strukturasi
 
 ```
 opencv/
   main.py                 # Mahalliy test skripti (webcam oynasi). Asosiy
                            # aniqlash/tanish logikasi O'ZGARTIRILMASLIGI kerak.
   requirements.txt
-  .env                        # GEMINI_API_KEY, JWT_SECRET_KEY (git'ga tushmaydi)
+  package.json               # (yangi) faqat "start:dev" skripti uchun (npm)
+  .env                        # GEMINI_API_KEY, JWT_SECRET_KEY, MONGO_DEV,
+                                # MONGO_PROD, ENVIRONMENT (git'ga tushmaydi)
   .gitignore
-  app.db                        # SQLite: users, history (git'ga tushmaydi)
-  product_memory/                 # ChromaDB fayllari (git'ga tushmaydi)
+  product_memory/                 # ChromaDB fayllari (git'ga tushmaydi, obyekt
+                                    # embeddinglar shu yerda qoladi - MongoDB'ga
+                                    # ko'chirilmaydi, faqat users/history ko'chadi)
   app/
     __init__.py
     detector.py                    # YOLOv8 wrapper (o'zgartirilmaydi)
@@ -67,15 +90,33 @@ opencv/
                                        # o'zgartirilmaydi, faqat user_id bilan
                                        # ishlaydigan additive parametrlar/funksiyalar
                                        # qo'shiladi
+    database_mongo.py                  # (yangi) MongoDB ulanishi (pymongo),
+                                         # startup'da ulanish holatini chop etadi
     gemini_info.py                    # Gemini orqali ma'lumot olish
     api.py                              # FastAPI backend: /products, /info,
-                                          # /ws/stream, /auth/*, /history
-    auth.py                              # (yangi) parol hash, JWT yaratish/tekshirish
-    users_db.py                           # (yangi) SQLite: users (username-based) + history CRUD
-  frontend/                                # (yangi) Next.js ilova
-    - /login, /signup sahifalari (username + parol)
-    - / (asosiy, faqat login qilingandan keyin): sidebar (tarix) +
-      kamera/chat paneli
+                                          # /scan, /info/expand, /ws/stream,
+                                          # /auth/*, /history, /admin/*
+    auth.py                              # parol hash, JWT yaratish/tekshirish
+    users_db.py                           # MongoDB: users (+ is_admin), history CRUD
+                                            # (SQLite'dan MongoDB'ga ko'chirildi,
+                                            # funksiya imzolari o'zgarmadi)
+```
+
+### opencv-frontend/ (frontend) fayl strukturasi
+
+```
+opencv-frontend/            # Next.js ilova, opencv/ papkasidan MUSTAQIL
+  package.json                # yarn bilan boshqariladi (yarn.lock)
+  app/
+    login/page.tsx
+    signup/page.tsx
+    admin/page.tsx              # (yangi) faqat is_admin userlar uchun
+    page.tsx                     # asosiy: sidebar (tarix) + kamera paneli
+  components/
+    CameraPanel.tsx
+    Sidebar.tsx
+  lib/
+    api.ts                        # backend bilan bog'lanish (fetch/WS)
 ```
 
 ## Muhim qoidalar (Claude Code uchun)
@@ -96,22 +137,37 @@ opencv/
   har bir yozuv bosilganda tafsilotlari ochiladi), o'ng/asosiy qismda
   kontent. "Kamerani ishga tushirish" tugmasi faqat login qilingan
   foydalanuvchiga ko'rinadi.
+- Frontend kodi `opencv/` ichida EMAS — mustaqil `~/Desktop/opencv-frontend/`
+  papkasida, `yarn` bilan boshqariladi. `opencv/frontend` papkasi endi
+  ishlatilmaydi (bo'sh qoldirilishi yoki o'chirilishi mumkin).
+- Backendni ishga tushirish uchun `opencv/package.json`dagi
+  `npm run start:dev` skripti ishlatiladi — bu FAQAT wrapper, backend
+  kodi Python bo'lib qoladi (Node'ga ko'chirilmaydi).
+- Admin panel hozircha faqat **ko'rish** huquqiga ega (barcha userlar +
+  ularning tarixi) — o'chirish/tahrirlash funksiyalari yo'q.
 
 ## Ishga tushirish
 
 ```bash
+# Backend (~/Desktop/opencv):
 cd ~/Desktop/opencv
-source .venv/bin/activate
-pip install -r requirements.txt
+source .venv/bin/activate && pip install -r requirements.txt   # bir martalik
+npm run start:dev          # uvicorn'ni --reload bilan ishga tushiradi (port 8000)
 
-# Mahalliy test (webcam oynasi, autentifikatsiyasiz):
+# Mahalliy test (webcam oynasi, autentifikatsiyasiz, alohida):
 python main.py
 
-# Backend API:
-uvicorn app.api:app --reload --port 8000
+# Frontend (~/Desktop/opencv-frontend, ALOHIDA papka):
+cd ~/Desktop/opencv-frontend
+yarn install    # bir martalik
+yarn run dev
+```
 
-# Frontend (qo'shilgandan keyin):
-cd frontend && npm install && npm run dev
+Admin sifatida kirish uchun (email/ro'yxatdan o'tish orqali emas, birinchi
+marta qo'lda belgilanadi) — MongoDB Atlas'ning veb-interfeysida (Atlas ->
+Browse Collections -> `users`) yoki `mongosh` orqali:
+```
+db.users.updateOne({ username: "SIZNING_USERNAME" }, { $set: { is_admin: true } })
 ```
 
 ## Hozirgi holat
@@ -131,4 +187,27 @@ cd frontend && npm install && npm run dev
       narsalar butunlay aniqlanmay qoladi. Yechim: "Mahsulotni skanerlash"
       tugmasi butun kadrni (YOLO natijasidan qat'iy nazar) to'g'ridan-to'g'ri
       Gemini'ga yuborib, u nima ekanini mustaqil aniqlaydi — qurilmoqda.
-- [ ] "Ko'proq ma'lumot" (kengaytirilgan tavsif) tugmasi — qurilmoqda
+- [x] "Ko'proq ma'lumot" (kengaytirilgan tavsif) va "Mahsulotni skanerlash"
+      (`/scan`, `/info/expand`) — backend tomoni tasdiqlangan
+- [ ] **Loyiha ikkiga bo'linmoqda**: frontend `opencv/frontend`dan
+      `~/Desktop/opencv-frontend` (mustaqil papka) ga ko'chirilmoqda,
+      `yarn run dev` bilan ishga tushadi. Backendga `package.json` qo'shilib,
+      `npm run start:dev` UniFinder uslubida ishlaydi (ichida Python/uvicorn).
+- [ ] **Admin panel** (UniFinder admin uslubida): `users` kolleksiyasida
+      `is_admin` maydoni (default false, qo'lda MongoDB orqali yoqiladi).
+      Faqat ko'rish huquqi: barcha foydalanuvchilar ro'yxati + har
+      birining tarixi. O'chirish/bloklash YO'Q (hozircha faqat ko'rish
+      rejimi).
+- [x] **MongoDB migratsiyasi**: users/history MongoDB Atlas'da (tasdiqlangan,
+      Compass orqali ko'rilgan)
+- [ ] **Signup'ga telefon raqami maydoni qo'shilmoqda** (NESTAR loyihasidagi
+      `memberPhone` uslubida) — `users` kolleksiyasida `phone` maydoni,
+      majburiy, tasdiqlash (OTP) YO'Q — shunchaki saqlanadi.
+- [x] Admin panel dizayni NESTAR "Member List" uslubiga yaqinlashtirildi
+      (statistik kartalar, qidiruv, jadval)
+- [ ] **`is_admin` (boolean) -> `role` (string enum: "ADMIN" | "USER") ga
+      o'zgartirilmoqda** — NESTAR'dagi `memberType` uslubiga mos kelishi
+      uchun. Admin qilish MongoDB Compass'da qo'lda `role` maydonini
+      `"ADMIN"` ga o'zgartirish orqali amalga oshiriladi (`is_admin`
+      o'rniga). O'zgartirgandan keyin **chiqib qayta kirish** kerak
+      (JWT eski token'da eski rolni saqlab qoladi).

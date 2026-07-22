@@ -6,7 +6,7 @@ import os
 from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
-from fastapi import Header, HTTPException, Query, status
+from fastapi import Depends, Header, HTTPException, Query, status
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
@@ -85,3 +85,14 @@ async def get_current_user(
     if user is None:
         raise _CREDENTIALS_ERROR
     return user
+
+
+async def require_admin(current_user: dict = Depends(get_current_user)):
+    """`get_current_user` ustiga qurilgan: admin bo'lmagan foydalanuvchilar
+    uchun 403 qaytaradi (admin panel endpoint'larini himoya qilish uchun)."""
+    if current_user.get("role") != "ADMIN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sizda admin huquqi yo'q",
+        )
+    return current_user

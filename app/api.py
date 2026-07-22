@@ -7,6 +7,8 @@
 #   POST /auth/login     - kirish (username + parol) -> JWT
 #   GET  /auth/me         - joriy foydalanuvchi (himoyalangan)
 #   GET  /history          - joriy foydalanuvchi tarixi (himoyalangan)
+#   GET  /admin/users      - barcha foydalanuvchilar ro'yxati (faqat admin)
+#   GET  /admin/users/{id}/history - berilgan foydalanuvchi tarixi (faqat admin)
 #   GET  /products      - bazadagi barcha nomlar ro'yxati (himoyalangan)
 #   POST /info          - obyekt haqida ma'lumot (kesh yoki Gemini orqali) (himoyalangan)
 #   POST /scan           - butun kadrni Gemini'ga yuborib mustaqil aniqlash
@@ -17,6 +19,7 @@
 
 import base64
 import io
+from contextlib import asynccontextmanager
 
 import cv2
 import numpy as np
@@ -25,14 +28,29 @@ from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 from pydantic import BaseModel
 
-from app.auth import create_access_token, get_current_user, hash_password, verify_password
+from app.auth import create_access_token, get_current_user, hash_password, require_admin, verify_password
 from app.database import find_match, get_info, list_items, save_info, save_item
+from app.database_mongo import connect_to_mongo
 from app.detector import detect_objects
 from app.embedder import get_embedding
 from app.gemini_info import get_expanded_info, get_object_info, identify_and_describe
-from app.users_db import add_history_entry, create_user, get_history_for_user, get_user_by_username
+from app.users_db import (
+    add_history_entry,
+    create_user,
+    get_all_users,
+    get_history_for_user,
+    get_user_by_id,
+    get_user_by_username,
+)
 
-app = FastAPI(title="Mahsulot Detektor API")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    connect_to_mongo()
+    yield
+
+
+app = FastAPI(title="Mahsulot Detektor API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -51,6 +69,7 @@ app.add_middleware(
 class SignupRequest(BaseModel):
     username: str
     password: str
+    phone: str
 
 
 class LoginRequest(BaseModel):
@@ -62,7 +81,7 @@ class LoginRequest(BaseModel):
 def signup(payload: SignupRequest):
     hashed = hash_password(payload.password)
     try:
-        create_user(payload.username, hashed)
+        create_user(payload.username, hashed, payload.phone)
     except ValueError:
         raise HTTPException(status_code=400, detail="Bu username allaqachon band")
 
@@ -82,12 +101,24 @@ def login(payload: LoginRequest):
 
 @app.get("/auth/me")
 def read_me(current_user: dict = Depends(get_current_user)):
-    return {"username": current_user["username"]}
+    return {"username": current_user["username"], "role": current_user.get("role", "USER")}
 
 
 @app.get("/history")
 def read_history(current_user: dict = Depends(get_current_user)):
     return {"history": get_history_for_user(current_user["id"])}
+
+
+@app.get("/admin/users")
+def admin_list_users(current_user: dict = Depends(require_admin)):
+    return {"users": get_all_users()}
+
+
+@app.get("/admin/users/{user_id}/history")
+def admin_user_history(user_id: int, current_user: dict = Depends(require_admin)):
+    if get_user_by_id(user_id) is None:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+    return {"history": get_history_for_user(user_id)}
 
 
 @app.get("/products")
